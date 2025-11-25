@@ -160,8 +160,10 @@ const App: React.FC = () => {
         <Suspense fallback={<div className="absolute inset-0 flex items-center justify-center text-blue-500/50 font-mono text-xs">LOADING DATA...</div>}>
           <Canvas 
             camera={{ position: [0, 0, 10], fov: 45 }}
-            gl={{ antialias: true, alpha: true }}
-            dpr={[1, 2]}
+            // Optimization: Turn off antialias (expensive for point clouds)
+            // Optimization: Limit pixel ratio to 1.5 to save GPU on retina screens
+            gl={{ antialias: false, alpha: true, powerPreference: "high-performance" }}
+            dpr={[1, 1.5]} 
           >
             {/* Dark Fog for Depth blending */}
             <fog attach="fog" args={['#000000', 8, 28]} />

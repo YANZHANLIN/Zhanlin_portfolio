@@ -1,5 +1,5 @@
 import React, { useRef, useMemo, useState } from 'react';
-import { useFrame, useLoader, ThreeElements } from '@react-three/fiber';
+import { useFrame, useLoader, ThreeElements, ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
 
 // Vertex Shader: Depth Map Generation & Volumetric Displacement
@@ -29,74 +29,67 @@ void main() {
   vec3 pos = position;
   
   // -- 1. TEXTURE FETCH FOR DEPTH (The Core Mechanic) --
-  // We read the texture here in the vertex shader (Vertex Texture Fetch)
   vec4 imgColor = texture2D(uTexture, uv);
   
-  // Calculate Luminance (Brightness) of the pixel
-  // This determines "how close" the particle is.
+  // Calculate Luminance (Brightness)
   float luminance = dot(imgColor.rgb, vec3(0.299, 0.587, 0.114));
   vElevation = luminance;
 
   // -- 2. VOLUMETRIC EXTRUSION --
-  // Brighter pixels pop forward. Darker pixels stay back.
-  // We multiply by uHover to flatten inactive cards slightly.
-  float depthStrength = 3.5; 
+  float depthStrength = 4.0; 
   float activeFactor = 0.5 + (0.5 * uHover); 
   pos.z += luminance * depthStrength * activeFactor;
 
-  // -- 3. ORGANIC IDLE BREATHING --
-  // The whole cloud gently undulates
-  float breath = sin(uTime * 0.8 + pos.x) * 0.1;
-  pos.z += breath * luminance; // Only the structure breathes, not the void
+  // -- 3. ENHANCED BREATHING EFFECT --
+  // Much stronger idle animation
+  float breathTime = uTime * 1.2; // Faster breath
+  float breathSine = sin(breathTime + pos.x * 0.8);
+  
+  // Z-axis heave (breathing chest)
+  pos.z += breathSine * 0.25 * luminance; // Increased amplitude
+  
+  // Expansion/contraction
+  pos.xy *= (1.0 + (sin(uTime * 0.8) * 0.04));
 
-  // -- 4. MOUSE INTERACTION (Magnetic Fluid) --
-  // When hovered, add turbulent noise to simulate a digital fluid
+  // -- 4. STRONG MOUSE INTERACTION (Magnetic Fluid) --
   if (uInteraction > 0.0) {
-      float noiseVal = noise(vec3(pos.x * 2.0, pos.y * 2.0, uTime * 2.0));
+      // Chaotic noise field
+      float noiseVal = noise(vec3(pos.x * 3.0, pos.y * 3.0, uTime * 4.0));
+      
       vec3 displace = vec3(
-          cos(uTime * 5.0 + pos.z) * 0.2,
-          sin(uTime * 5.0 + pos.z) * 0.2,
-          noiseVal * 0.5
+          cos(uTime * 6.0 + pos.z) * 0.4, // X wobble
+          sin(uTime * 6.0 + pos.z) * 0.4, // Y wobble
+          noiseVal * 0.8                  // Z scatter
       );
-      pos += displace * uInteraction;
+      
+      // Apply displacement
+      pos += displace * uInteraction * (0.5 + 0.5 * luminance);
   }
 
   // -- 5. EDGE DIFFUSION & BLUR --
-  // The user wants edges to be "blurred and diffuse".
-  // We scatter particles based on their distance from the center UV.
   float distFromCenter = distance(uv, vec2(0.5));
-  
-  // Calculate a scatter factor that increases towards edges
   float scatter = smoothstep(0.35, 0.55, distFromCenter);
-  
-  // Random dispersion direction
   vec3 randomDir = vec3(
       random(uv) - 0.5, 
       random(uv + vec2(1.0)) - 0.5, 
       (random(uv + vec2(2.0)) - 0.5) * 0.5
   );
-  
-  // Apply scatter: Push edge particles outward into a mist
-  pos += randomDir * scatter * 2.0;
+  pos += randomDir * scatter * 2.5;
 
-  // -- 6. VISIBILITY CULLING (The "Shape" Effect) --
-  // Calculate visibility.
-  // 1. Luminance Threshold: Hide black background pixels (void sculpting)
-  // 2. Edge Fade: Fade out the scattered particles at the very edge
+  // -- 6. VISIBILITY CULLING --
   float luminanceThreshold = 0.15;
   vVisibility = smoothstep(luminanceThreshold, luminanceThreshold + 0.1, luminance);
-  
-  // Soften the outer scattered area
   vVisibility *= (1.0 - smoothstep(0.4, 0.5, distFromCenter));
 
   vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
   
   // -- POINT SIZE CALCULATION --
-  // Brighter (foreground) = Bigger
-  // Closer to camera = Bigger
-  float baseSize = 3.5;
-  gl_PointSize = baseSize * (luminance + 0.2) * (15.0 / -mvPosition.z);
-  gl_PointSize *= (1.0 + uInteraction * 0.3); // Grow on hover
+  // Slightly increased base size to compensate for lower particle count
+  float baseSize = 5.0; 
+  // Pulse size with breath too
+  float sizePulse = 1.0 + (sin(uTime * 2.0) * 0.1); 
+  gl_PointSize = baseSize * sizePulse * (luminance + 0.2) * (15.0 / -mvPosition.z);
+  gl_PointSize *= (1.0 + uInteraction * 0.5); // Grow significantly on hover
 
   gl_Position = projectionMatrix * mvPosition;
 }
@@ -112,34 +105,21 @@ varying float vVisibility;
 varying float vElevation;
 
 void main() {
-  // -- 1. DISCARD DARK/VOID PIXELS --
   if (vVisibility < 0.01) discard;
 
-  // -- 2. CIRCULAR SOFT PARTICLE --
   vec2 coord = gl_PointCoord - vec2(0.5);
   float len = length(coord);
-  if (len > 0.5) discard; // Circular clip
+  if (len > 0.5) discard; 
 
-  // -- 3. COLOR MAPPING --
   vec4 texColor = texture2D(uTexture, vUv);
   
-  // "Holographic" Color Grading
-  // Map low elevation (dark) to Deep Blue/Void color
-  // Map high elevation (bright) to Original Color + Cyan tint
-  vec3 deepColor = vec3(0.02, 0.05, 0.15); // Dark Blue
+  vec3 deepColor = vec3(0.02, 0.05, 0.15); 
   vec3 highlightColor = texColor.rgb;
   
-  // Mix based on the luminance/elevation calculated in vertex
   vec3 finalColor = mix(deepColor, highlightColor, vElevation);
-  
-  // Boost highlights slightly
   finalColor += vec3(0.0, 0.1, 0.2) * vElevation;
 
-  // -- 4. ALPHA & GLOW --
-  // Soft edge for individual particle
   float alpha = 1.0 - smoothstep(0.3, 0.5, len);
-  
-  // Combine with vertex visibility and global opacity
   alpha *= uOpacity * vVisibility;
 
   gl_FragColor = vec4(finalColor, alpha);
@@ -157,21 +137,25 @@ const ParticleImage: React.FC<ParticleImageProps> = ({ url, isActive, opacity = 
   const materialRef = useRef<THREE.ShaderMaterial>(null);
   const texture = useLoader(THREE.TextureLoader, url);
   const [hovered, setHovered] = useState(false);
+  
+  // Interaction State
+  const isDragging = useRef(false);
+  const dragStart = useRef({ x: 0, y: 0 });
+  const previousPointer = useRef({ x: 0, y: 0 });
+  const wasDragging = useRef(false); // Flag to prevent click after drag
 
-  // Increase segment count significantly for "dense point cloud" look
   const geometry = useMemo(() => {
-    // 384x384 = ~147k particles. Good balance for performance/detail.
-    const segments = 384; 
+    // Optimization: Reduced density from 384 to 220
+    // This reduces vertex count from ~147k to ~48k per card (3x performance boost)
+    const segments = 220; 
     const geom = new THREE.PlaneGeometry(8, 5, segments, segments); 
     return geom;
   }, []);
 
   useFrame((state) => {
     if (materialRef.current) {
-      // Time
       materialRef.current.uniforms.uTime.value = state.clock.getElapsedTime();
       
-      // Carousel Active State Interp
       const targetHover = isActive ? 1.0 : 0.0; 
       materialRef.current.uniforms.uHover.value = THREE.MathUtils.lerp(
         materialRef.current.uniforms.uHover.value,
@@ -179,15 +163,14 @@ const ParticleImage: React.FC<ParticleImageProps> = ({ url, isActive, opacity = 
         0.05
       );
       
-      // Mouse Interaction Interp
+      // Use internal hovered state for reaction
       const targetInteraction = (hovered && isActive) ? 1.0 : 0.0;
       materialRef.current.uniforms.uInteraction.value = THREE.MathUtils.lerp(
         materialRef.current.uniforms.uInteraction.value,
         targetInteraction,
-        0.08
+        0.1 // Faster reaction
       );
 
-      // Opacity Interp
       materialRef.current.uniforms.uOpacity.value = THREE.MathUtils.lerp(
         materialRef.current.uniforms.uOpacity.value,
         opacity,
@@ -196,12 +179,67 @@ const ParticleImage: React.FC<ParticleImageProps> = ({ url, isActive, opacity = 
     }
   });
 
+  // Handlers for Rotation Logic
+  const handlePointerDown = (e: ThreeEvent<PointerEvent>) => {
+    if (!isActive) return;
+    
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    
+    isDragging.current = true;
+    wasDragging.current = false;
+    dragStart.current = { x: e.clientX, y: e.clientY };
+    previousPointer.current = { x: e.clientX, y: e.clientY };
+  };
+
+  const handlePointerMove = (e: ThreeEvent<PointerEvent>) => {
+    setHovered(true);
+
+    if (isDragging.current && isActive && meshRef.current) {
+      const dx = e.clientX - previousPointer.current.x;
+      const dy = e.clientY - previousPointer.current.y;
+      
+      // Rotate the mesh locally
+      meshRef.current.rotation.y += dx * 0.005;
+      meshRef.current.rotation.x += dy * 0.005;
+      
+      previousPointer.current = { x: e.clientX, y: e.clientY };
+    }
+  };
+
+  const handlePointerUp = (e: ThreeEvent<PointerEvent>) => {
+    if (!isActive) return;
+    isDragging.current = false;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+
+    // Calculate total drag distance
+    const dx = e.clientX - dragStart.current.x;
+    const dy = e.clientY - dragStart.current.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    // If moved significantly, mark as "was dragging" to block click
+    if (dist > 5) {
+      wasDragging.current = true;
+    }
+  };
+
+  const handleClick = (e: ThreeEvent<MouseEvent>) => {
+    // If we were dragging, we consume the click event so it doesn't bubble to parent
+    if (wasDragging.current) {
+      e.stopPropagation();
+      wasDragging.current = false; // Reset
+    }
+  };
+
   return (
     <points 
       ref={meshRef} 
       geometry={geometry} 
       onPointerOver={() => setHovered(true)}
       onPointerOut={() => setHovered(false)}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onClick={handleClick}
       {...props}
     >
       <shaderMaterial
