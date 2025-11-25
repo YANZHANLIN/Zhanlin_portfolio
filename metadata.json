@@ -1,0 +1,7 @@
+{
+  "name": "ZHANLIN - AI Architecture Portfolio",
+  "description": "A futuristic, dark-themed architecture portfolio featuring particlized interactions and Gemini-powered project assistance.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
